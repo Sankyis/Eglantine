@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 
+#include "core/core_timing.h"
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "common/settings.h"
@@ -1369,7 +1370,7 @@ void IHidServer::WriteNativeInputIdleHeader(NativeInputMemory& registration) {
     if (registration.memory == nullptr || registration.size < sizeof(NativeInputLifoHeader)) {
         return;
     }
-    const auto* const owner = registration.memory->GetOwner();
+    auto* const owner = registration.memory->GetOwner();
     if (owner == nullptr) {
         return;
     }
