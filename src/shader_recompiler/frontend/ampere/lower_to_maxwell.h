@@ -1323,12 +1323,12 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 (u64{1} << 48));
             break;
         }
-        case 0xb97: { // SULD.P.2D/2D_ARRAY/3D.IGN, direct descriptor, channel mask at 72-75.
+        case 0xb97: { // SULD.P.1D.BUFFER/2D/2D_ARRAY/3D.IGN, direct descriptor, channel mask at 72-75.
             const u32 binding = insn.Bits(54, 5), offset = insn.Bits(40, 14);
             const u32 coordinate = insn.Bits(24, 8);
             const u32 channels = insn.Bits(72, 4);
-            const u32 dimension = insn.Bits(61, 3); // Maxwell's codes: 3 = 2D, 4 = 2D_ARRAY, 5 = 3D
-            if ((insn.words[2] & ~0xf00U) != 0x001e0000 || channels == 0 || dimension < 3 || dimension > 5 ||
+            const u32 dimension = insn.Bits(61, 3); // Maxwell's codes: 1 = BUFFER_1D, 3 = 2D, 4 = 2D_ARRAY, 5 = 3D
+            if ((insn.words[2] & ~0xf00U) != 0x001e0000 || channels == 0 || dimension < 1 || dimension > 5 ||
                 binding >= 18 || offset > 0x1fff || insn.Bits(59, 2) || dest == 255 ||
                 coordinate > (dimension >= 4 ? 252U : 253U))
                 return fail(index, "native formatted surface load mode");
@@ -1339,14 +1339,16 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 (u64{channels} << 20) | (u64{dimension} << 33) | (u64{offset} << 36) | (u64{1} << 51));
             break;
         }
-        case 0xb9b: { // SUST.P.2D/3D.IGN, direct descriptor, channel mask at 72-75.
+        case 0xb9b: { // SUST.P.1D.BUFFER/2D/3D.IGN, direct descriptor, channel mask at 72-75.
             const u32 binding = insn.Bits(54, 5), offset = insn.Bits(40, 14);
             const u32 data = insn.Bits(32, 8), coordinate = insn.Bits(24, 8);
-            const u32 dimension = insn.Bits(61, 3);
+            const u32 dimension = insn.Bits(61, 3); // Maxwell's codes: 1 = BUFFER_1D, 3 = 2D, 4 = 2D_ARRAY, 5 = 3D
             const u32 channels = insn.Bits(72, 4);
             const u32 mode = insn.words[2] & ~0xf00U;
             const bool strong = mode == 0x0010a000; // .STRONG.SM: fenced on both sides
-            if ((mode != 0x00100000 && !strong) || channels == 0 || dimension < 3 || dimension > 5 ||
+            // Orbitals (040004F027560000) streams through 1D formatted surfaces (BUFFER_1D);
+            // rejecting them stalls its loading pipeline on a store whose result never lands.
+            if ((mode != 0x00100000 && !strong) || channels == 0 || dimension < 1 || dimension > 5 ||
                 binding >= 18 || offset > 0x1fff || insn.Bits(59, 2) || data > 252 || coordinate > (dimension >= 4 ? 252U : 253U))
                 return fail(index, "native formatted surface store mode");
             // A second descriptor buffer: SUST.B with the handle, loaded from that buffer, in R250.
