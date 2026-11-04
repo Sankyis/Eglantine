@@ -10,6 +10,8 @@
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/core.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_shared_memory.h"
 #include "core/hle/kernel/k_transfer_memory.h"
 #include "core/hle/kernel/kernel.h"
@@ -121,7 +123,9 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
         {135, C<&IHidServer::SetNpadCaptureButtonAssignment>, "SetNpadCaptureButtonAssignment"},
         {136, C<&IHidServer::ClearNpadCaptureButtonAssignment>, "ClearNpadCaptureButtonAssignment"},
         {137, &IHidServer::StubReplyZeroed, "Unknown137"},
-        {138, &IHidServer::StubReplyZeroed, "Unknown138"},
+        // 138: the aruid and a u64, forwarded to the input backend (hid image 0x25580); replies
+        // result only. Switch 2 native input.
+        {138, C<&IHidServer::SetNativeInputValue138>, "SetNativeInputValue138"},
         {139, &IHidServer::StubReplyZeroed, "Unknown139"},
         {140, &IHidServer::StubReplyZeroed, "Unknown140"},
         {150, &IHidServer::StubReplyZeroed, "Unknown150"},
@@ -140,9 +144,9 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
         {210, C<&IHidServer::EndPermitVibrationSession>, "EndPermitVibrationSession"},
         {211, C<&IHidServer::IsVibrationDeviceMounted>, "IsVibrationDeviceMounted"},
         {212, C<&IHidServer::SendVibrationValueInBool>, "SendVibrationValueInBool"},
-        {213, C<&IHidServer::Unknown213>, "Unknown213"},
-        {214, C<&IHidServer::SendNx2VibrationValues>, "SendNx2VibrationValues (guessed)"},
-        {220, C<&IHidServer::Unknown220>, "Unknown220"},
+        {213, C<&IHidServer::SendNativeVibrationValue213>, "SendNativeVibrationValue213"},
+        {214, C<&IHidServer::SendNativeVibrationValues>, "SendNativeVibrationValues"},
+        {220, C<&IHidServer::GetNativeInputFlag220>, "GetNativeInputFlag220"},
         {300, C<&IHidServer::ActivateConsoleSixAxisSensor>, "ActivateConsoleSixAxisSensor"},
         {301, C<&IHidServer::StartConsoleSixAxisSensor>, "StartConsoleSixAxisSensor"},
         {302, C<&IHidServer::StopConsoleSixAxisSensor>, "StopConsoleSixAxisSensor"},
@@ -255,25 +259,27 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
         {3013, &IHidServer::StubReplyZeroed, "SetDebugPadGenericPadMap"}, //21.0.0+
         {3014, &IHidServer::StubReplyZeroed, "GetDebugPadKeyboardMap"}, //21.0.0+
         {3015, &IHidServer::StubReplyZeroed, "SetDebugPadKeyboardMap"}, //21.0.0+
-        {3110, &IHidServer::StubReplyZeroed, "Unknown3110"},
-        {3111, &IHidServer::StubReplyZeroed, "Unknown3111"},
-        {3112, &IHidServer::StubReplyZeroed, "Unknown3112"},
-        {3113, &IHidServer::StubReplyZeroed, "Unknown3113"},
+        // 3110 InitializeJcms, 3111 FinalizeJcms, 3112 StartJcms, 3113 StopJcms (Switch 2 only);
+        // 3131-3143 configure the same "native input" (Joy-Con mouse) backend.
+        {3110, C<&IHidServer::RegisterJcmsMemory>, "InitializeJcms"},
+        {3111, C<&IHidServer::NativeInputCommand3111>, "FinalizeJcms"},
+        {3112, C<&IHidServer::SetNativeInputFlags3112>, "StartJcms"},
+        {3113, C<&IHidServer::SetNativeInputFlags3113>, "StopJcms"},
         {3114, &IHidServer::StubReplyZeroed, "Unknown3114"},
         {3130, &IHidServer::StubReplyZeroed, "Unknown3130"},
-        {3131, &IHidServer::StubReplyZeroed, "Unknown3131"},
-        {3132, &IHidServer::StubReplyZeroed, "Unknown3132"},
-        {3133, &IHidServer::StubReplyZeroed, "Unknown3133"},
+        {3131, C<&IHidServer::NativeInputCommand3131>, "NativeInputCommand3131"},
+        {3132, C<&IHidServer::SetNativeInputParameters>, "SetNativeInputParameters"},
+        {3133, C<&IHidServer::GetNativeInputState3133>, "GetNativeInputState3133"},
         {3134, &IHidServer::StubReplyZeroed, "Unknown3134"},
-        {3135, &IHidServer::StubReplyZeroed, "Unknown3135"},
-        {3136, &IHidServer::StubReplyZeroed, "Unknown3136"},
-        {3137, &IHidServer::StubReplyZeroed, "Unknown3137"},
-        {3138, &IHidServer::StubReplyZeroed, "Unknown3138"},
-        {3139, &IHidServer::StubReplyZeroed, "Unknown3139"},
-        {3140, &IHidServer::StubReplyZeroed, "Unknown3140"},
-        {3141, &IHidServer::StubReplyZeroed, "Unknown3141"},
-        {3142, &IHidServer::StubReplyZeroed, "Unknown3142"},
-        {3143, &IHidServer::StubReplyZeroed, "Unknown3143"},
+        {3135, C<&IHidServer::SetNativeInputEnabled3135>, "SetNativeInputEnabled3135"},
+        {3136, C<&IHidServer::SetNmouseButtonConfigJoyLeftJcms>, "SetNmouseButtonConfigJoyLeftJcms"},
+        {3137, C<&IHidServer::SetNmouseButtonConfigJoyRightJcms>, "SetNmouseButtonConfigJoyRightJcms"},
+        {3138, C<&IHidServer::SetMergedNmouseSourceTypes>, "SetMergedNmouseSourceTypes"},
+        {3139, C<&IHidServer::RegisterNativeInputMemory>, "RegisterNativeInputMemory"},
+        {3140, C<&IHidServer::SetNativeInputValues3140>, "SetNativeInputValues3140"},
+        {3141, C<&IHidServer::SetNativeInputValues3141>, "SetNativeInputValues3141"},
+        {3142, C<&IHidServer::SetNativeInputFloats3142>, "SetNativeInputFloats3142"},
+        {3143, C<&IHidServer::SetNativeInputValue3143>, "SetNativeInputValue3143"},
         {3144, &IHidServer::StubReplyZeroed, "Unknown3144"},
         {3145, &IHidServer::StubReplyZeroed, "Unknown3145"},
         {3146, &IHidServer::StubReplyZeroed, "Unknown3146"},
@@ -289,7 +295,13 @@ IHidServer::IHidServer(Core::System& system_, std::shared_ptr<ResourceManager> r
     RegisterHandlers(functions);
 }
 
-IHidServer::~IHidServer() = default;
+IHidServer::~IHidServer() {
+    // Release the retained guest transfer memories registered through InitializeJcms (3110) and
+    // RegisterNativeInputMemory (3139); the server holds one kernel reference per registration.
+    for (const auto& registration : native_input_memories) {
+        registration.memory->Close(system.Kernel());
+    }
+}
 
 Result IHidServer::CreateAppletResource(OutInterface<IAppletResource> out_applet_resource,
                                         ClientAppletResourceUserId aruid) {
@@ -1113,36 +1125,265 @@ Result IHidServer::IsVibrationDeviceMounted(
     R_SUCCEED();
 }
 
-Result IHidServer::SendNx2VibrationValues(
-    u64 unknown, AppletResourceUserId aruid,
+Result IHidServer::SendNativeVibrationValues(
+    u16 flags, AppletResourceUserId aruid,
     InArray<Core::HID::VibrationDeviceHandle, BufferAttr_HipcPointer> vibration_handles,
     InArray<Core::HID::VibrationValue, BufferAttr_HipcPointer> vibration_values) {
-    LOG_DEBUG(Service_HID, "called, unknown={}, applet_resource_user_id={}", unknown, aruid.pid);
+    LOG_DEBUG(Service_HID, "called, flags={:#x}, applet_resource_user_id={}", flags, aruid.pid);
 
-    // Unlike 206 this never fails: rumble is best effort and the command is only known from
-    // captures, so an unexpected handle or layout shouldn't return an error a game may treat as
-    // fatal.
-    const auto count = (std::min)(vibration_handles.size(), vibration_values.size());
-    for (std::size_t i = 0; i < count; i++) {
-        const auto result = GetResourceManager()->SendVibrationValue(
-            aruid.pid, vibration_handles[i], vibration_values[i]);
-        if (result.IsError()) {
-            LOG_DEBUG(Service_HID, "failed to send vibration {}, result={:#x}", i, result.raw);
+    // Only flag values 0 and 2 are seen on hardware; anything else is rejected by the real
+    // server, so mirror that instead of silently accepting garbage.
+    R_UNLESS(flags == 0 || flags == 2, IPC::ResultNotSupported);
+
+    // Unlike 206 this never fails for bad handles: rumble is best effort.
+    R_RETURN(SendVibrationValues(ClientAppletResourceUserId{aruid.pid}, vibration_handles,
+                                 vibration_values));
+}
+
+Result IHidServer::SendNativeVibrationValue213(u16 first, u32 second, f32 amp_low, f32 freq_low,
+                                               f32 amp_high, f32 freq_high,
+                                               AppletResourceUserId aruid) {
+    LOG_DEBUG(Service_HID,
+              "(STUBBED) called, first={:#x}, second={:#x}, values={}, {}, {}, {}, aruid={}", first,
+              second, amp_low, freq_low, amp_high, freq_high, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+Result IHidServer::GetNativeInputFlag220(Out<bool> out_value, u32 value,
+                                         AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input flag 220, value={:#x}, aruid={}", value,
+             aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    // The real server reads this from the input backend, which is not emulated: report false.
+    *out_value = false;
+    R_SUCCEED();
+}
+
+// ---- Switch 2 native input / Jcms (initialize/start + configuration commands) ----
+
+namespace {
+
+// Every nn::hid subsystem buffer (shared memory sections and the transfer memories games hand to
+// InitializeSevenSixAxisSensor / InitializeJcms / ...) starts with the same 0x20-byte Lifo header
+// followed by AtomicStorage entries. The SDK reader polls this header for a valid entry; a fully
+// zeroed buffer makes that poll loop forever (seen with Orbitals, which froze right after
+// StartJcms on builds that replied to 3110/3112 with a bare placeholder).
+struct NativeInputLifoHeader {
+    s64 timestamp;
+    s64 total_entry_count;
+    s64 last_entry_index;
+    s64 entry_count;
+};
+static_assert(sizeof(NativeInputLifoHeader) == 0x20, "NativeInputLifoHeader is an invalid size");
+
+constexpr s64 NativeInputEntryCount = 17; // HidEntryCount, the standard nn::hid Lifo depth
+
+} // namespace
+
+Result IHidServer::RegisterNativeInputMemory(u8 mode, u32 parameter0, u32 parameter1, u32 parameter2,
+                                             ClientAppletResourceUserId aruid, u64 size,
+                                             InCopyHandle<Kernel::KTransferMemory> memory) {
+    LOG_INFO(Service_HID,
+             "Native input memory: mode={}, parameters={:#x}/{:#x}/{:#x}, aruid={}, size={:#x}",
+             mode, parameter0, parameter1, parameter2, aruid.pid, size);
+    R_UNLESS(memory.Get() && memory->GetOwner() != nullptr &&
+                 memory->GetOwner()->GetProcessId() == aruid.pid,
+             Kernel::ResultInvalidHandle);
+    R_UNLESS(mode <= 1 && size != 0 && size == memory->GetSize() && size <= 0x1000000,
+             Kernel::ResultInvalidSize);
+    R_UNLESS(native_input_memories.size() < 64, Kernel::ResultOutOfResource);
+    const auto existing =
+        std::ranges::find(native_input_memories, memory.Get(), &NativeInputMemory::memory);
+    R_UNLESS(existing == native_input_memories.end(), Kernel::ResultInvalidState);
+
+    memory->Open(system.Kernel());
+    auto& registration = native_input_memories.emplace_back(NativeInputMemory{
+        memory.Get(), aruid.pid, size, {mode, parameter0, parameter1, parameter2}});
+
+    // Publish an idle Lifo header right away: on hardware the hid system module owns this buffer
+    // and writes reports once the subsystem starts, so it is never left fully zero. Emulate the
+    // "subsystem live, no devices connected" state.
+    WriteNativeInputIdleHeader(registration);
+    R_SUCCEED();
+}
+
+Result IHidServer::RegisterJcmsMemory(ClientAppletResourceUserId aruid, u64 size,
+                                      InCopyHandle<Kernel::KTransferMemory> memory) {
+    LOG_INFO(Service_HID, "Jcms (Joy-Con mouse) memory registered: aruid={}, size={:#x}", aruid.pid,
+             size);
+    // Jcms is registered in native input mode 1 (3139 registers mode 0 for generic native input).
+    R_RETURN(RegisterNativeInputMemory(1, 0, 0, 0, aruid, size, memory));
+}
+
+// Commands 3111-3113, 3131-3133, 3135 and 3140-3143 share one server shape (hid image offsets
+// 0x2ef20-0x30be0): the raw aruid must be 0 or the caller's, else 0x60a. The backend call carries
+// the aruid (and for 3135/3140/3141/3143 further values, 3142 four floats); the server keeps no
+// other state.
+Result IHidServer::CheckNativeInputAruid(AppletResourceUserId aruid) const {
+    R_UNLESS(aruid.pid == 0 || aruid.pid == system.ApplicationProcess()->GetProcessId(),
+             Result{0x60a});
+    R_SUCCEED();
+}
+
+// 3111 (FinalizeJcms) and 3131 take only the aruid.
+Result IHidServer::NativeInputCommand3111(AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "FinalizeJcms (native input command 3111), aruid={}", aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+Result IHidServer::NativeInputCommand3131(AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input command 3131, aruid={}", aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3112 (StartJcms) and 3113 (StopJcms) take a u32 flag set and the aruid. Only bits 0-2 and bit 8
+// are valid; bits 3-7 fail with 0x285aca and bits 9-15 with 0x285cca.
+Result IHidServer::SetNativeInputFlags3112(u32 flags, AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "StartJcms: native input flags={:#x}, aruid={}", flags, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_UNLESS((flags & 0xf8) == 0, Result{0x285aca});
+    R_UNLESS((flags & 0xfe00) == 0, Result{0x285cca});
+
+    // The subsystem is now live: refresh the idle header of every registered buffer of this
+    // process so its reader observes a fresh, valid entry instead of waiting on zeros.
+    for (auto& registration : native_input_memories) {
+        if (registration.aruid == aruid.pid || aruid.pid == 0) {
+            WriteNativeInputIdleHeader(registration);
         }
     }
-
     R_SUCCEED();
 }
 
-Result IHidServer::Unknown213() {
-    LOG_DEBUG(Service_HID, "(STUBBED) called");
+Result IHidServer::SetNativeInputFlags3113(u32 flags, AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "StopJcms: native input flags={:#x}, aruid={}", flags, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_UNLESS((flags & 0xf8) == 0, Result{0x285aca});
+    R_UNLESS((flags & 0xfe00) == 0, Result{0x285cca});
     R_SUCCEED();
 }
 
-Result IHidServer::Unknown220(Out<u8> out) {
-    LOG_DEBUG(Service_HID, "(STUBBED) called");
-    *out = 0;
+// 3132 takes two u32 values and the aruid; the server forwards only the aruid (backend call 0x102).
+Result IHidServer::SetNativeInputParameters(u32 first, u32 second, AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input parameters: {:#x}, {:#x}, aruid={}", first,
+             second, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
     R_SUCCEED();
+}
+
+// 3133 replies with a u64 that stays zero: the server hands the backend no output buffer
+// (backend call 0x103).
+Result IHidServer::GetNativeInputState3133(Out<u64> out_state, AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input state 3133, aruid={}", aruid.pid);
+    *out_state = 0;
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3135 takes a bool (bit 0 of a u8) and the aruid.
+Result IHidServer::SetNativeInputEnabled3135(u8 enabled, AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input enable 3135={}, aruid={}", enabled & 1,
+             aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3140: two u32 values, the aruid and a u64.
+Result IHidServer::SetNativeInputValues3140(u32 first, u32 second, AppletResourceUserId aruid,
+                                            u64 value) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input values 3140: {:#x}, {:#x}, {:#x}, aruid={}",
+             first, second, value, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3141: a bool (bit 0 of a u8), the aruid and a u64.
+Result IHidServer::SetNativeInputValues3141(u8 flag, AppletResourceUserId aruid, u64 value) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input values 3141: {}, {:#x}, aruid={}", flag & 1,
+             value, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3142: four floats and the aruid.
+Result IHidServer::SetNativeInputFloats3142(f32 first, f32 second, f32 third, f32 fourth,
+                                            AppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input floats 3142: {}, {}, {}, {}, aruid={}", first,
+             second, third, fourth, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// 3143: the aruid and a u64.
+Result IHidServer::SetNativeInputValue3143(AppletResourceUserId aruid, u64 value) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input value 3143: {:#x}, aruid={}", value, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+// Command 138 takes the aruid and a u64 (hid image offset 0x25580); the server forwards only the
+// aruid to the input backend and replies with a result only.
+Result IHidServer::SetNativeInputValue138(AppletResourceUserId aruid, u64 value) {
+    LOG_INFO(Service_HID, "(STUBBED) Native input value 138: {:#x}, aruid={}", value, aruid.pid);
+    R_TRY(CheckNativeInputAruid(aruid));
+    R_SUCCEED();
+}
+
+Result IHidServer::SetMergedNmouseSourceTypes(u32 source_types, ClientAppletResourceUserId aruid) {
+    LOG_INFO(Service_HID, "Merged Joy-Con mouse source types: {:#x}, aruid={}", source_types,
+             aruid.pid);
+    const auto memory = std::ranges::find_if(
+        native_input_memories,
+        [&](const NativeInputMemory& registration) { return registration.aruid == aruid.pid; });
+    R_UNLESS(memory != native_input_memories.end(), Kernel::ResultNotFound);
+    memory->merged_source_types = source_types;
+    R_SUCCEED();
+}
+
+Result IHidServer::SetNmouseButtonConfiguration(ClientAppletResourceUserId aruid, u64 configuration,
+                                                size_t side) {
+    LOG_INFO(Service_HID, "Native Joy-Con mouse buttons: side={}, config={:#x}, aruid={}", side,
+             configuration, aruid.pid);
+    const auto memory = std::ranges::find_if(
+        native_input_memories, [&](const NativeInputMemory& registration) {
+            return registration.aruid == aruid.pid && registration.parameters[0] == 0;
+        });
+    R_UNLESS(memory != native_input_memories.end(), Kernel::ResultNotFound);
+    memory->jcms_button_configurations[side] = configuration;
+    R_SUCCEED();
+}
+
+Result IHidServer::SetNmouseButtonConfigJoyLeftJcms(ClientAppletResourceUserId aruid,
+                                                    u64 configuration) {
+    R_RETURN(SetNmouseButtonConfiguration(aruid, configuration, 0));
+}
+
+Result IHidServer::SetNmouseButtonConfigJoyRightJcms(ClientAppletResourceUserId aruid,
+                                                     u64 configuration) {
+    R_RETURN(SetNmouseButtonConfiguration(aruid, configuration, 1));
+}
+
+void IHidServer::WriteNativeInputIdleHeader(NativeInputMemory& registration) {
+    if (registration.memory == nullptr || registration.size < sizeof(NativeInputLifoHeader)) {
+        return;
+    }
+    const auto* const owner = registration.memory->GetOwner();
+    if (owner == nullptr) {
+        return;
+    }
+
+    NativeInputLifoHeader header{};
+    header.timestamp = system.CoreTiming().GetGlobalTimeNs().count();
+    header.total_entry_count = NativeInputEntryCount;
+    header.last_entry_index = 0;
+    header.entry_count = 1;
+
+    owner->GetMemory().WriteBlock(registration.memory->GetSourceAddress(), &header,
+                                  sizeof(header));
+    LOG_DEBUG(Service_HID, "Native input idle Lifo header written: aruid={}, size={:#x}",
+              registration.aruid, registration.size);
 }
 
 Result IHidServer::SendVibrationValueInBool(

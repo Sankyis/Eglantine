@@ -6,6 +6,9 @@
 
 #pragma once
 
+#include <array>
+#include <vector>
+
 #include "core/hle/service/cmif_types.h"
 #include "core/hle/service/service.h"
 #include "hid_core/hid_types.h"
@@ -190,17 +193,19 @@ private:
                                     Core::HID::VibrationDeviceHandle vibration_device_handle,
                                     ClientAppletResourceUserId aruid);
     // Switch 2 sends vibration every frame with 214: pointer buffers of device handles and values
-    // like 206, but the aruid is raw data after an unknown u64 instead of a sent process id.
-    Result SendNx2VibrationValues(
-        u64 unknown, AppletResourceUserId aruid,
+    // like 206, prefixed by a u16 flags word (0 or 2 are the only valid values).
+    Result SendNativeVibrationValues(
+        u16 flags, AppletResourceUserId aruid,
         InArray<Core::HID::VibrationDeviceHandle, BufferAttr_HipcPointer> vibration_handles,
         InArray<Core::HID::VibrationValue, BufferAttr_HipcPointer> vibration_values);
-    // 213 (32 bytes, aruid): sent per controller every frame by Kirby Air Riders (tens of
-    // thousands of auto stub log lines a run); no reply data. Accepted and dropped.
-    Result Unknown213();
-    // 220 (16 bytes, aruid): replies one byte (meaning unknown); answer 0 instead of leaving it to
-    // the message buffer's leftovers.
-    Result Unknown220(Out<u8> out);
+    // 213 (32 bytes: u16, u32, four floats (a vibration value) and the aruid): sent per controller
+    // by Switch 2 games at startup; the server forwards it to the input backend and replies result
+    // only. Accepted and dropped.
+    Result SendNativeVibrationValue213(u16 first, u32 second, f32 amp_low, f32 freq_low,
+                                       f32 amp_high, f32 freq_high, AppletResourceUserId aruid);
+    // 220 (a u32 and the aruid): replies one bool read from the input backend, which is not
+    // emulated, so it reports false.
+    Result GetNativeInputFlag220(Out<bool> out_value, u32 value, AppletResourceUserId aruid);
     Result ActivateConsoleSixAxisSensor(ClientAppletResourceUserId aruid);
     Result StartConsoleSixAxisSensor(Core::HID::ConsoleSixAxisSensorHandle console_sixaxis_handle,
                                      ClientAppletResourceUserId aruid);
@@ -276,6 +281,52 @@ private:
                                                  s32 unknown, ClientAppletResourceUserId aruid);
     Result SetTouchScreenResolution(u32 width, u32 height, ClientAppletResourceUserId aruid);
     Result SetMouseLibraryVersion(ClientAppletResourceUserId aruid);
+
+    // ---- Switch 2 "native input" / Jcms family (3110-3143, 138, 220, 213, 214) ----
+    // Jcms is the Switch 2 Joy-Con mouse subsystem. 3110 (InitializeJcms) hands the server a
+    // transfer memory the hid system module later fills with a standard nn::hid Lifo of reports;
+    // 3112 (StartJcms) starts the subsystem. The server shapes below were taken from the
+    // NX 23.0.0 hid image (dispatch entries around offsets 0x25580-0x30be0).
+    Result RegisterNativeInputMemory(u8 mode, u32 parameter0, u32 parameter1, u32 parameter2,
+                                     ClientAppletResourceUserId aruid, u64 size,
+                                     InCopyHandle<Kernel::KTransferMemory> memory);
+    Result RegisterJcmsMemory(ClientAppletResourceUserId aruid, u64 size,
+                              InCopyHandle<Kernel::KTransferMemory> memory);
+    Result CheckNativeInputAruid(AppletResourceUserId aruid) const;
+    Result NativeInputCommand3111(AppletResourceUserId aruid);
+    Result SetNativeInputFlags3112(u32 flags, AppletResourceUserId aruid);
+    Result SetNativeInputFlags3113(u32 flags, AppletResourceUserId aruid);
+    Result NativeInputCommand3131(AppletResourceUserId aruid);
+    Result SetNativeInputParameters(u32 first, u32 second, AppletResourceUserId aruid);
+    Result GetNativeInputState3133(Out<u64> out_state, AppletResourceUserId aruid);
+    Result SetNativeInputEnabled3135(u8 enabled, AppletResourceUserId aruid);
+    Result SetNativeInputValues3140(u32 first, u32 second, AppletResourceUserId aruid, u64 value);
+    Result SetNativeInputValues3141(u8 flag, AppletResourceUserId aruid, u64 value);
+    Result SetNativeInputFloats3142(f32 first, f32 second, f32 third, f32 fourth,
+                                    AppletResourceUserId aruid);
+    Result SetNativeInputValue3143(AppletResourceUserId aruid, u64 value);
+    Result SetNativeInputValue138(AppletResourceUserId aruid, u64 value);
+    Result SetMergedNmouseSourceTypes(u32 source_types, ClientAppletResourceUserId aruid);
+    Result SetNmouseButtonConfigJoyLeftJcms(ClientAppletResourceUserId aruid, u64 configuration);
+    Result SetNmouseButtonConfigJoyRightJcms(ClientAppletResourceUserId aruid, u64 configuration);
+    Result SetNmouseButtonConfiguration(ClientAppletResourceUserId aruid, u64 configuration,
+                                        size_t side);
+
+    struct NativeInputMemory {
+        Kernel::KTransferMemory* memory;
+        u64 aruid;
+        u64 size;
+        std::array<u32, 4> parameters;
+        u32 merged_source_types{};
+        std::array<u64, 2> jcms_button_configurations{};
+    };
+
+    // nn::hid readers poll the Lifo header of a subsystem buffer until a valid entry exists; an
+    // all-zero buffer keeps them waiting forever. Write the standard 0x20-byte Lifo header with a
+    // single (empty) entry so a game's Jcms/native-input reader sees an idle-but-live subsystem.
+    void WriteNativeInputIdleHeader(NativeInputMemory& registration);
+
+    std::vector<NativeInputMemory> native_input_memories;
 
     std::shared_ptr<ResourceManager> resource_manager;
     std::shared_ptr<HidFirmwareSettings> firmware_settings;
